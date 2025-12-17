@@ -12,10 +12,7 @@ network:
 
 openthread:
   device_type: FTD
-  channel: 25
-  network_name: "MyHome88445244"
-  tlv: "0e08000065d3f2bd0000000300001935060004001fffc0020828dabb7c06334ab50708fd0753ef438ada6e05104b874eafe5294b56f415951eb1af2823030e4d79486f6d6538383434353234340102cb830410099669aae26c8c54f97e1ae19bc262d70c0402a0f7f8"
-  mesh_local_prefix: "fd00:1234:5678::/64"
+  tlv: !secret thread_tlv
   force_dataset: true
 
 # Expose ESPHome API so Home Assistant or Thread border router can communicate
@@ -28,40 +25,46 @@ logger:
 ota:
   platform: esphome
 
-# Relay for fireplace control
+################################
+# SWITCHES
+################################
 switch:
+  # 1. PHYSICAL RELAY (The "Muscle")
   - platform: gpio
     pin:
       number: 2
-      inverted: false           # Change to true if relay is active-low
+      inverted: false
     id: fireplace_relay
+    restore_mode: ALWAYS_OFF
+    # Note: No 'name' here keeps this hidden from the Home Assistant UI
+
+  # 2. VIRTUAL SWITCH (The "Brain")
+  - platform: template
     name: "Fireplace"
-    restore_mode: ALWAYS_OFF   # Ensures safe default: relay off on boot/reset
-    optimistic: false
-    
+    id: fireplace
+    restore_mode: ALWAYS_OFF
+    optimistic: true
     turn_on_action:
       - switch.turn_on: fireplace_relay
       - script.execute: auto_off_timer
     turn_off_action:
-    
       - switch.turn_off: fireplace_relay
       - script.stop: auto_off_timer
 
-############################
+################################
 # AUTO-OFF TIMER SCRIPT
-############################
+################################
 script:
   - id: auto_off_timer
     mode: restart
     then:
       - delay: !lambda |-
           return (uint32_t)(auto_off_hours->state * 3600000);
-      - switch.turn_off: fireplace_relay
-      - switch.turn_off: fireplace_ignite
+      - switch.turn_off: fireplace
 
-############################
+################################
 # CONFIGURABLE AUTO-OFF TIME
-############################
+################################
 number:
   - platform: template
     name: "Fireplace Auto-Off Timer"
