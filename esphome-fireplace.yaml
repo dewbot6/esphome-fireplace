@@ -1,0 +1,75 @@
+esphome:
+  name: fireplace
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+# OpenThread configuration
+network:
+  enable_ipv6: true
+
+openthread:
+  device_type: FTD
+  channel: 25
+  network_name: "MyHome88445244"
+  tlv: "0e08000065d3f2bd0000000300001935060004001fffc0020828dabb7c06334ab50708fd0753ef438ada6e05104b874eafe5294b56f415951eb1af2823030e4d79486f6d6538383434353234340102cb830410099669aae26c8c54f97e1ae19bc262d70c0402a0f7f8"
+  mesh_local_prefix: "fd00:1234:5678::/64"
+  force_dataset: true
+
+# Expose ESPHome API so Home Assistant or Thread border router can communicate
+api:
+
+# Logging for debugging
+logger:
+
+# OTA updates for firmware
+ota:
+  platform: esphome
+
+# Relay for fireplace control
+switch:
+  - platform: gpio
+    pin:
+      number: 2
+      inverted: false           # Change to true if relay is active-low
+    id: fireplace_relay
+    name: "Fireplace"
+    restore_mode: ALWAYS_OFF   # Ensures safe default: relay off on boot/reset
+    optimistic: false
+    
+    turn_on_action:
+      - switch.turn_on: fireplace_relay
+      - script.execute: auto_off_timer
+    turn_off_action:
+    
+      - switch.turn_off: fireplace_relay
+      - script.stop: auto_off_timer
+
+############################
+# AUTO-OFF TIMER SCRIPT
+############################
+script:
+  - id: auto_off_timer
+    mode: restart
+    then:
+      - delay: !lambda |-
+          return (uint32_t)(auto_off_hours->state * 3600000);
+      - switch.turn_off: fireplace_relay
+      - switch.turn_off: fireplace_ignite
+
+############################
+# CONFIGURABLE AUTO-OFF TIME
+############################
+number:
+  - platform: template
+    name: "Fireplace Auto-Off Timer"
+    id: auto_off_hours
+    unit_of_measurement: "h"
+    min_value: 0.5
+    max_value: 12
+    step: 0.5
+    initial_value: 6
+    restore_value: true
+    optimistic: true
