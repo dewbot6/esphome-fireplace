@@ -1,0 +1,181 @@
+esphome:
+  name: downstairs-fireplace
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+# OpenThread configuration
+network:
+  enable_ipv6: true
+
+openthread:
+  device_type: FTD
+  tlv: !secret thread_tlv
+  force_dataset: true
+
+# Expose ESPHome API so Home Assistant or Thread border router can communicate
+api:
+
+# Logging for debugging
+logger:
+
+# OTA updates for firmware
+ota:
+  platform: esphome
+
+# ===== I2C bus =====
+i2c:
+  sda: GPIO2
+  scl: GPIO1
+  scan: true
+
+# ===== Globals =====
+globals:
+  - id: motor_power
+    type: int
+    initial_value: '40'   # default safe power 0–63
+  - id: full_travel_time
+    type: int
+    initial_value: '4500' # ms - will be calibrated
+  - id: stall_current
+    type: float
+    initial_value: '0.6'  # amps - adjust after measurements
+  - id: valve_position
+    type: int
+    initial_value: '0'    # 0 = closed, 100 = fully open
+  - id: calibration_running
+    type: bool
+    initial_value: 'false'
+  - id: fault_lockout
+    type: bool
+    initial_value: 'false'
+
+# ===== INA226 sensor (current + voltage monitoring) =====
+sensor:
+  - platform: ina226
+    address: 0x41
+    shunt_resistance: 0.1 ohm
+    update_interval: 50ms
+    current:
+      name: "Valve Motor Current"
+      id: valve_current
+    bus_voltage:
+      name: "Valve Supply Voltage"
+
+# ===== Binary sensor for stall detection =====
+binary_sensor:
+  - platform: template
+    name: "Valve Stall Detected"
+    lambda: |-
+      return id(valve_current).state > id(stall_current);
+    on_press:
+      then:
+        - script.execute: motor_stop
+        - lambda: |-
+            ESP_LOGW("valve", "Stall detected! Motor stopped.");
+            id(fault_lockout) = true;
+
+# ===== DRV8830 motor driver =====
+i2c_device:
+  - id: drv8830
+    address: 0x60
+
+# ===== Scripts =====
+script:
+  # Motor control
+  - id: motor_stop
+    then:
+      - lambda: |-
+          uint8_t data[2] = {0x00, 0x00};
+          id(drv8830).write(data, 2);
+
+  - id: motor_run
+    parameters:
+      dir: int   # 1=open, -1=close
+    then:
+      - lambda: |-
+          if (id(fault_lockout)) return;
+          uint8_t speed = id(motor_power);
+          uint8_t ctrl;
+          if (dir > 0) ctrl = 0x40 | speed;
+          else ctrl = 0x80 | speed;
+          uint8_t data[2] = {0x00, ctrl};
+          id(drv8830).write(data, 2);
+
+  # Open/Close scripts (timed)
+  - id: valve_open
+    mode: restart
+    then:
+      - script.execute:
+          id: motor_run
+          dir: 1
+      - delay: !lambda "return id(full_travel_time);"
+      - script.execute: motor_stop
+      - lambda: |-
+          id(valve_position) = 100;
+
+  - id: valve_close
+    mode: restart
+    then:
+      - script.execute:
+          id: motor_run
+          dir: -1
+      - delay: !lambda "return id(full_travel_time);"
+      - script.execute: motor_stop
+      - lambda: |-
+          id(valve_position) = 0;
+
+  # Auto-calibration
+  - id: auto_calibrate
+    mode: restart
+    then:
+      - lambda: |-
+          id(calibration_running) = true;
+      - script.execute: valve_close
+      - delay: 1000ms
+      - script.execute: valve_open
+      - delay: 5000ms
+      - lambda: |-
+          id(full_travel_time) = 4500; // adjust after observation
+          id(calibration_running) = false;
+
+# ===== Number slider (0-100% flame level) =====
+number:
+  - platform: template
+    name: "Valve Flame Level"
+    min_value: 0
+    max_value: 100
+    step: 1
+    set_action:
+      - lambda: |-
+          if (id(fault_lockout)) return;
+          int target = int(x);
+          int delta = target - id(valve_position);
+          if (delta == 0) return;
+
+          int dir = (delta > 0) ? 1 : -1;
+          unsigned long duration = (abs(delta) * id(full_travel_time)) / 100;
+          id(motor_run).execute(dir);
+          delay(duration);
+          id(motor_stop).execute();
+          id(valve_position) = target;
+
+# ===== Buttons =====
+button:
+  - platform: template
+    name: "Reset Valve Fault"
+    on_press:
+      - lambda: |-
+          id(fault_lockout) = false;
+
+  - platform: template
+    name: "Valve Open Test"
+    on_press:
+      - script.execute: valve_open
+
+  - platform: template
+    name: "Valve Close Test"
+    on_press:
+      - script.execute: valve_close
