@@ -20,7 +20,7 @@ void DRV8830::setup() {
 
 void DRV8830::dump_config() {
   ESP_LOGCONFIG(TAG, "DRV8830 Motor Driver");
-  LOG_I2C_DEVICE(this);
+  ESP_LOGCONFIG(TAG, "  I2C Address: 0x%02X", this->address_);
 }
 
 bool DRV8830::set_motor(uint8_t speed, Direction dir) {
@@ -34,11 +34,15 @@ bool DRV8830::get_fault(uint8_t *fault) {
 }
 
 bool DRV8830::write_register_(uint8_t reg, uint8_t value) {
-  return this->write_byte(reg, value);
+  uint8_t buf[2] = {reg, value};
+  return this->bus_->write(this->address_, buf, 2);
 }
 
 bool DRV8830::read_register_(uint8_t reg, uint8_t *value) {
-  return this->read_byte(reg, value);
+  if (!this->bus_->write(this->address_, &reg, 1)) {
+    return false;
+  }
+  return this->bus_->read(this->address_, value, 1);
 }
 
 }  // namespace drv8830

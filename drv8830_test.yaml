@@ -1,5 +1,9 @@
 esphome:
   name: drv8830_test
+  includes:
+    - components/drv8830/drv8830.h
+    - components/drv8830/drv8830.cpp
+
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -35,18 +39,9 @@ i2c:
 # ===== Globals =====
 globals:
   - id: drv8830_instance
-    type: esphome::drv8830::DRV8830*
+    type: void*
     restore_value: false
     initial_value: 'nullptr'
-
-# Create the DRV8830 component on boot
-on_boot:
-  then:
-    - lambda: |-
-        auto *drv = new esphome::drv8830::DRV8830(id(bus_a), 0x60);
-        App.register_component(drv);
-        id(drv8830_instance) = drv;
-        ESP_LOGI("drv8830", "DRV8830 component registered");
 
 # Example test switches
 switch:
@@ -54,13 +49,17 @@ switch:
     name: "Motor Forward 1s"
     turn_on_action:
       - lambda: |-
-          auto *drv = id(drv8830_instance);
-          if (drv != nullptr) {
-            drv->set_motor(32, drv->FORWARD);
+          auto *drv = static_cast<esphome::drv8830::DRV8830*>(id(drv8830_instance));
+          if (drv == nullptr) {
+            drv = new esphome::drv8830::DRV8830(id(bus_a), 0x60);
+            App.register_component(drv);
+            id(drv8830_instance) = static_cast<void*>(drv);
+            ESP_LOGI("drv8830", "DRV8830 component created and registered");
           }
+          drv->set_motor(32, drv->FORWARD);
       - delay: 1s
       - lambda: |-
-          auto *drv = id(drv8830_instance);
+          auto *drv = static_cast<esphome::drv8830::DRV8830*>(id(drv8830_instance));
           if (drv != nullptr) {
             drv->set_motor(0, drv->RELEASE);
           }
@@ -69,13 +68,17 @@ switch:
     name: "Motor Backward 1s"
     turn_on_action:
       - lambda: |-
-          auto *drv = id(drv8830_instance);
-          if (drv != nullptr) {
-            drv->set_motor(32, drv->BACKWARD);
+          auto *drv = static_cast<esphome::drv8830::DRV8830*>(id(drv8830_instance));
+          if (drv == nullptr) {
+            drv = new esphome::drv8830::DRV8830(id(bus_a), 0x60);
+            App.register_component(drv);
+            id(drv8830_instance) = static_cast<void*>(drv);
+            ESP_LOGI("drv8830", "DRV8830 component created and registered");
           }
+          drv->set_motor(32, drv->BACKWARD);
       - delay: 1s
       - lambda: |-
-          auto *drv = id(drv8830_instance);
+          auto *drv = static_cast<esphome::drv8830::DRV8830*>(id(drv8830_instance));
           if (drv != nullptr) {
             drv->set_motor(0, drv->RELEASE);
           }
