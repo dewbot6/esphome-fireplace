@@ -1,5 +1,21 @@
-# Gitignore settings for ESPHome
-# This is an example and may include too much for your use-case.
-# You can modify this file to suit your needs.
+# ESPHome build artifacts and generated files
 /.esphome/
+
+# Secrets file - NEVER commit this!
 /secrets.yaml
+
+# PlatformIO files (if using PlatformIO directly)
+.pio/
+*.pyc
+__pycache__/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

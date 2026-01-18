@@ -1,12 +1,19 @@
 esphome:
   name: fireplace
+  # Change this to match your device name
+  # This will be used for the device hostname and entity IDs
 
 esp32:
   board: esp32-c6-devkitc-1
   framework:
     type: esp-idf
 
-# OpenThread configuration
+# =============================
+# NETWORK CONFIGURATION
+# =============================
+# OpenThread configuration for Thread/Matter support
+# Alternative: Use WiFi instead by uncommenting wifi section below
+# and commenting out the openthread section
 network:
   enable_ipv6: true
 
@@ -15,64 +22,86 @@ openthread:
   tlv: !secret thread_tlv
   force_dataset: true
 
+# Alternative WiFi configuration (uncomment to use WiFi instead of OpenThread):
+# wifi:
+#   ssid: !secret wifi_ssid
+#   password: !secret wifi_password
+
 # Expose ESPHome API so Home Assistant or Thread border router can communicate
 api:
 
-# Logging for debugging
+# Web server for easy debugging and control via browser
+web_server:
+  port: 80
+
+# Logging level: DEBUG for troubleshooting, INFO for normal operation
 logger:
+  level: INFO
+  # level: DEBUG  # Uncomment for detailed debugging
 
 # OTA updates for firmware
 ota:
   platform: esphome
 
-################################
-# SWITCHES
-################################
+# =============================
+# RELAY SWITCH CONFIGURATION
+# =============================
+# Controls a relay that switches millivolt fireplace on/off
+# Millivolt fireplaces use a simple on/off switch (no dimming)
 switch:
-  # 1. PHYSICAL RELAY (The "Muscle")
+  # Physical GPIO relay (hidden from UI - controlled by virtual switch)
+  # GPIO2 is default for ESP32-C6-DevKitC-1 - change if using different pin
   - platform: gpio
     pin:
-      number: 2
-      inverted: false
+      number: 2  # Change if using different GPIO pin
+      inverted: false  # Set to true if relay is active-low
     id: fireplace_relay
-    restore_mode: ALWAYS_OFF
-    # Note: No 'name' here keeps this hidden from the Home Assistant UI
+    restore_mode: ALWAYS_OFF  # Always start with fireplace off for safety
+    # No 'name' here keeps this hidden from Home Assistant UI
+    # Only the virtual switch below is exposed
 
-  # 2. VIRTUAL SWITCH (The "Brain")
+  # Virtual switch (exposed to Home Assistant/Apple Home)
+  # This is the "smart" switch that users interact with
+  # It controls the physical relay and manages the auto-off timer
   - platform: template
     name: "Fireplace"
     id: fireplace
-    restore_mode: ALWAYS_OFF
+    restore_mode: ALWAYS_OFF  # Always start with fireplace off for safety
     optimistic: true
     turn_on_action:
       - switch.turn_on: fireplace_relay
-      - script.execute: auto_off_timer
+      - script.execute: auto_off_timer  # Start auto-off countdown
     turn_off_action:
       - switch.turn_off: fireplace_relay
-      - script.stop: auto_off_timer
+      - script.stop: auto_off_timer  # Cancel auto-off timer
 
-################################
+# =============================
 # AUTO-OFF TIMER SCRIPT
-################################
+# =============================
+# Automatically turns off fireplace after configured time
+# Timer restarts if fireplace is turned on again while running
 script:
   - id: auto_off_timer
-    mode: restart
+    mode: restart  # Restart timer if fireplace is turned on again
     then:
       - delay: !lambda |-
+          // Convert hours to milliseconds
           return (uint32_t)(auto_off_hours->state * 3600000);
       - switch.turn_off: fireplace
 
-################################
+# =============================
 # CONFIGURABLE AUTO-OFF TIME
-################################
+# =============================
+# Set how many hours before fireplace automatically turns off
+# Adjustable in Home Assistant for convenience
 number:
   - platform: template
     name: "Fireplace Auto-Off Timer"
     id: auto_off_hours
     unit_of_measurement: "h"
-    min_value: 0.5
-    max_value: 12
+    min_value: 0.5  # Minimum 30 minutes
+    max_value: 12   # Maximum 12 hours
     step: 0.5
-    initial_value: 6
-    restore_value: true
+    initial_value: 6  # Default 6 hours
+    restore_value: true  # Remember last setting
     optimistic: true

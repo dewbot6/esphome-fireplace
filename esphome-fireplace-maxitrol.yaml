@@ -1,12 +1,27 @@
 esphome:
   name: downstairs-fireplace
+  # Change this to match your device name
+  # This will be used for the device hostname and entity IDs
+
+external_components:
+  # DRV8830 motor driver component for controlling Maxitrol valve motor
+  - source:
+      type: git
+      url: https://github.com/dewbot6/esphome-drv8830
+      ref: main
+    components: [drv8830]
 
 esp32:
   board: esp32-c6-devkitc-1
   framework:
     type: esp-idf
 
-# OpenThread configuration
+# =============================
+# NETWORK CONFIGURATION
+# =============================
+# OpenThread configuration for Thread/Matter support
+# Alternative: Use WiFi instead by uncommenting wifi section below
+# and commenting out the openthread section
 network:
   enable_ipv6: true
 
@@ -15,75 +30,186 @@ openthread:
   tlv: !secret thread_tlv
   force_dataset: true
 
+# Alternative WiFi configuration (uncomment to use WiFi instead of OpenThread):
+# wifi:
+#   ssid: !secret wifi_ssid
+#   password: !secret wifi_password
+
 # Expose ESPHome API so Home Assistant can communicate
 api:
 
-# Logging for debugging
+# Web server for easy debugging and control via browser
+web_server:
+  port: 80
+
+# Logging level: DEBUG for troubleshooting, INFO for normal operation
 logger:
-  level: DEBUG
+  level: INFO
+  # level: DEBUG  # Uncomment for detailed debugging
 
 # OTA updates for firmware
 ota:
   platform: esphome
 
-# ===== I2C bus =====
+# =============================
+# I2C Bus Configuration
+# =============================
+# I2C pins for ESP32-C6-DevKitC-1
+# Adjust these GPIO pins if using a different board
+# Common ESP32-C6 pinout:
+#   - GPIO2: SDA (default)
+#   - GPIO1: SCL (default)
 i2c:
   id: bus_a
-  sda: GPIO2
-  scl: GPIO1
-  scan: true
-  frequency: 50000  # 50 kHz
+  sda: GPIO2  # Change if using different pin
+  scl: GPIO1  # Change if using different pin
+  scan: true  # Set to false after confirming I2C address
+  frequency: 50000  # 50kHz - adjust if needed for your setup
 
-# ===== Globals =====
+# =============================
+# DRV8830 Motor Driver
+# =============================
+# DRV8830 I2C motor driver connected to Maxitrol valve
+# Default I2C address is 0x60 (can be changed with A0/A1 pins)
+# Check I2C scan output in logs to confirm address
+drv8830:
+  id: motor
+  address: 0x60  # Change if using different I2C address
+
+# ===============================
+# USER CONFIGURABLE SETTINGS
+# ===============================
+# These settings appear in Home Assistant and can be adjusted
+# to fine-tune motor behavior for your specific fireplace valve
+number:
+  # Motor power level (10-63)
+  # Higher values = faster/more powerful movement
+  # Lower values = slower/gentler movement
+  # Start with default 60 and adjust based on your valve's response
+  - platform: template
+    name: "Fireplace Motor Power"
+    id: motor_power
+    min_value: 10
+    max_value: 63
+    step: 1
+    initial_value: 60
+    restore_value: true
+    optimistic: true
+    entity_category: config
+
+  # Time (in seconds) for motor to travel from 0% to 100%
+  # This is used to calculate how long to run the motor for partial movements
+  # Measure your valve's full travel time and set accordingly
+  - platform: template
+    name: "Fireplace Travel Time (seconds)"
+    id: travel_time
+    min_value: 5
+    max_value: 20
+    step: 0.5
+    initial_value: 10.5
+    restore_value: true
+    optimistic: true
+    entity_category: config
+
+# ===============================
+# INTERNAL STATE
+# ===============================
 globals:
-  - id: motor_speed
+  - id: last_level
+    type: float
+    restore_value: true
+    initial_value: '0.0'
+  - id: motor_direction
+    type: bool
+  - id: motor_duration_ms
     type: int
-    initial_value: '32'  # DRV8830 speed bits (0x06–0x3F)
 
-# ===== Buttons =====
-button:
-  - platform: template
-    name: "Motor Forward Test"
-    on_press:
+# ===============================
+# MOTOR CONTROL SCRIPT
+# ===============================
+# Non-blocking script to control motor movement
+# Uses script mode to prevent blocking the main loop (avoiding watchdog timer)
+# If a new movement is requested while motor is running, previous movement is stopped
+script:
+  - id: move_motor
+    mode: restart  # Restart script if called again while running (prevents queuing)
+    on_stop:
+      # Safety: Stop motor if script is interrupted
       - lambda: |-
-          uint8_t speed = id(motor_speed);
-          if (speed > 63) speed = 63;  // VSET max is 63
-          if (speed < 0) speed = 0;
-          // DRV8830: Bits 7-2 = VSET[5:0], Bit 1 = IN2, Bit 0 = IN1
-          // Forward: IN1=1, IN2=0
-          uint8_t ctrl = (speed << 2) | 0x01; // FORWARD command
-          uint8_t buf[2] = {0x00, ctrl};
-          id(bus_a).write(0x60, buf, 2);
-          ESP_LOGD("motor", "Forward command sent: speed=%d, ctrl=0x%02X", speed, ctrl);
-      - delay: 2s
+          id(motor).set_motor(0, drv8830::DRV8830::RELEASE);
+          ESP_LOGI("fireplace", "Motor movement interrupted, motor stopped");
+    then:
       - lambda: |-
-          uint8_t buf[2] = {0x00, 0x00}; // Coast (IN1=0, IN2=0)
-          id(bus_a).write(0x60, buf, 2);
-          ESP_LOGD("motor", "Motor released after 2s");
+          ESP_LOGI(
+            "fireplace",
+            "Moving %s for %dms (power=%d)",
+            id(motor_direction) ? "UP" : "DOWN",
+            id(motor_duration_ms),
+            (int) id(motor_power)->state
+          );
+          id(motor).set_motor(
+            (uint8_t) id(motor_power)->state,
+            id(motor_direction)
+              ? drv8830::DRV8830::BACKWARD
+              : drv8830::DRV8830::FORWARD
+          );
+      - delay: !lambda |-
+          return (uint32_t) id(motor_duration_ms);
+      - lambda: |-
+          id(motor).set_motor(
+            0,
+            drv8830::DRV8830::RELEASE
+          );
+          ESP_LOGI("fireplace", "Motor movement completed");
 
+# ===============================
+# FIREPLACE DIMMER CONTROL
+# ===============================
+# Creates a dimmer-like light entity that controls the fireplace valve position
+# Works with Apple HomeKit, Home Assistant, and other smart home platforms
+# Brightness level (0-100%) corresponds to valve position (closed to fully open)
+output:
   - platform: template
-    name: "Motor Backward Test"
-    on_press:
+    id: fireplace_output
+    type: float
+    write_action:
       - lambda: |-
-          uint8_t speed = id(motor_speed);
-          if (speed > 63) speed = 63;  // VSET max is 63
-          if (speed < 0) speed = 0;
-          // DRV8830: Bits 7-2 = VSET[5:0], Bit 1 = IN2, Bit 0 = IN1
-          // Reverse: IN1=0, IN2=1
-          uint8_t ctrl = (speed << 2) | 0x02; // REVERSE command
-          uint8_t buf[2] = {0x00, ctrl};
-          id(bus_a).write(0x60, buf, 2);
-          ESP_LOGD("motor", "Backward command sent: speed=%d, ctrl=0x%02X", speed, ctrl);
-      - delay: 2s
-      - lambda: |-
-          uint8_t buf[2] = {0x00, 0x00}; // Coast (IN1=0, IN2=0)
-          id(bus_a).write(0x60, buf, 2);
-          ESP_LOGD("motor", "Motor released after 2s");
+          // Convert brightness (0.0-1.0) to percentage (0-100)
+          float new_level = state * 100.0f;
+          float delta = new_level - id(last_level);
 
-  - platform: template
-    name: "Motor Stop/Release"
-    on_press:
-      - lambda: |-
-          uint8_t buf[2] = {0x00, 0x00}; // Coast (IN1=0, IN2=0)
-          id(bus_a).write(0x60, buf, 2);
-          ESP_LOGD("motor", "Motor released immediately");
+          // Ignore changes smaller than 1% to prevent jitter
+          if (fabs(delta) < 1.0f) {
+            ESP_LOGI("fireplace", "Change too small (%.2f%%), ignoring", fabs(delta));
+            return;
+          }
+
+          // Calculate movement direction and duration
+          bool increase = delta > 0;
+          float percent = fabs(delta) / 100.0f;
+          float run_time = percent * id(travel_time)->state;
+
+          ESP_LOGI(
+            "fireplace",
+            "Moving %s by %.1f%% for %.2fs (power=%d)",
+            increase ? "UP" : "DOWN",
+            fabs(delta),
+            run_time,
+            (int) id(motor_power)->state
+          );
+
+          // Store movement parameters and execute script
+          id(motor_direction) = increase;
+          id(motor_duration_ms) = (int)(run_time * 1000);
+          id(last_level) = new_level;
+          
+          // Execute motor movement script (non-blocking)
+          id(move_motor).execute();
+
+light:
+  - platform: monochromatic
+    name: "Fireplace Flame"
+    id: fireplace_flame
+    output: fireplace_output
+    default_transition_length: 0s  # No smooth transitions - immediate response
+    restore_mode: RESTORE_DEFAULT_ON  # Restore to last brightness on boot
