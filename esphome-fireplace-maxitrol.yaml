@@ -1,7 +1,20 @@
 esphome:
-  name: downstairs-fireplace
-  # Change this to match your device name
-  # This will be used for the device hostname and entity IDs
+  name: fireplace-maxitrol
+  name_add_mac_suffix: true
+  # Device name used for hostname and entity IDs in Home Assistant
+  on_boot:
+    # Set status LED to red immediately on power-up before the first interval fires.
+    # Priority -10 runs well after light components initialize (priority ~600),
+    # so status_led is guaranteed ready.
+    priority: -10
+    then:
+      - light.turn_on:
+          id: status_led
+          red: 1.0
+          green: 0.0
+          blue: 0.0
+          brightness: 0.3
+          transition_length: 0s
 
 external_components:
   # DRV8830 motor driver component for controlling Maxitrol valve motor
@@ -50,6 +63,24 @@ logger:
 # OTA updates for firmware
 ota:
   platform: esphome
+
+# =============================
+# STATUS LED CONFIGURATION
+# =============================
+# M5NanoC6 onboard WS2812 RGB LED: signal on GPIO20, power enable on GPIO19.
+# Shows Thread connectivity at a glance:
+#   SOLID RED   - not connected to Thread network
+#   SOLID GREEN - connected to Thread network
+# GPIO19 must be driven HIGH to power the LED; ALWAYS_ON ensures it is asserted
+# during setup(), before write_state() ever fires.
+# Marked internal so it does not appear as a controllable entity in Home Assistant.
+# esp32_rmt_led_strip is the correct driver for WS2812 under esp-idf (not neopixelbus).
+switch:
+  - platform: gpio
+    pin: GPIO19
+    id: rgb_pwr
+    internal: true
+    restore_mode: ALWAYS_ON
 
 # =============================
 # I2C Bus Configuration
@@ -132,13 +163,11 @@ globals:
 # If a new movement is requested while motor is running, previous movement is stopped
 script:
   - id: move_motor
-    mode: restart  # Restart script if called again while running (prevents queuing)
-    on_stop:
-      # Safety: Stop motor if script is interrupted
+    mode: restart
+    then:
+      # Safety: release motor at start in case a previous run was interrupted
       - lambda: |-
           id(motor).set_motor(0, drv8830::DRV8830::RELEASE);
-          ESP_LOGI("fireplace", "Motor movement interrupted, motor stopped");
-    then:
       - lambda: |-
           ESP_LOGI(
             "fireplace",
@@ -156,10 +185,7 @@ script:
       - delay: !lambda |-
           return (uint32_t) id(motor_duration_ms);
       - lambda: |-
-          id(motor).set_motor(
-            0,
-            drv8830::DRV8830::RELEASE
-          );
+          id(motor).set_motor(0, drv8830::DRV8830::RELEASE);
           ESP_LOGI("fireplace", "Motor movement completed");
 
 # ===============================
@@ -213,3 +239,39 @@ light:
     output: fireplace_output
     default_transition_length: 0s  # No smooth transitions - immediate response
     restore_mode: RESTORE_DEFAULT_ON  # Restore to last brightness on boot
+
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    internal: true
+    name: "Status LED"
+    pin: GPIO20
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: GRB
+    use_psram: false  # M5NanoC6 has no PSRAM; default true causes silent init failure
+
+# =============================
+# THREAD STATUS POLLING
+# =============================
+# Checks network connectivity every 2 seconds and updates the status LED.
+# network::is_connected() returns true when OpenThread has routable connectivity;
+# since OpenThread is the only network interface on this device, this is the
+# correct and simplest connectivity check.
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          bool connected = network::is_connected();
+          auto call = id(status_led).turn_on();
+          call.set_brightness(0.3f);
+          call.set_transition_length(0);
+          if (connected) {
+            call.set_red(0.0f);
+            call.set_green(1.0f);
+            call.set_blue(0.0f);
+          } else {
+            call.set_red(1.0f);
+            call.set_green(0.0f);
+            call.set_blue(0.0f);
+          }
+          call.perform();

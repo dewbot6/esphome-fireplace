@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import yaml; yaml.safe_load\\(open\\('/Users/andrewsnodgrass/GitHub/esphome-fireplace/esphome-fireplace-millivolt.yaml'\\)\\)\")",
+      "Bash(stty -f /dev/cu.usbmodem1101 115200)",
+      "Bash(timeout 15 cat /dev/cu.usbmodem1101)",
+      "WebFetch(domain:docs.m5stack.com)"
+    ]
+  }
+}
