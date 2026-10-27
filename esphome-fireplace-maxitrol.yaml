@@ -1,6 +1,5 @@
 esphome:
   name: fireplace-maxitrol
-  name_add_mac_suffix: true
   # Device name used for hostname and entity IDs in Home Assistant
   on_boot:
     # Set status LED to red immediately on power-up before the first interval fires.
@@ -142,6 +141,19 @@ number:
     optimistic: true
     entity_category: config
 
+  # Set how many hours before fireplace automatically turns off
+  # Adjustable in Home Assistant for convenience
+  - platform: template
+    name: "Fireplace Auto-Off Timer"
+    id: auto_off_hours
+    unit_of_measurement: "h"
+    min_value: 0.5  # Minimum 30 minutes
+    max_value: 12   # Maximum 12 hours
+    step: 0.5
+    initial_value: 3  # Default 3 hours
+    restore_value: true  # Remember last setting
+    optimistic: true
+
 # ===============================
 # INTERNAL STATE
 # ===============================
@@ -187,6 +199,19 @@ script:
       - lambda: |-
           id(motor).set_motor(0, drv8830::DRV8830::RELEASE);
           ESP_LOGI("fireplace", "Motor movement completed");
+
+  # =============================
+  # AUTO-OFF TIMER SCRIPT
+  # =============================
+  # Automatically turns off fireplace flame after configured time
+  # Timer restarts if flame is turned on again while running
+  - id: auto_off_timer
+    mode: restart  # Restart timer if flame is turned on again
+    then:
+      - delay: !lambda |-
+          // Convert hours to milliseconds
+          return (uint32_t)(auto_off_hours->state * 3600000);
+      - light.turn_off: fireplace_flame
 
 # ===============================
 # FIREPLACE DIMMER CONTROL
@@ -239,6 +264,10 @@ light:
     output: fireplace_output
     default_transition_length: 0s  # No smooth transitions - immediate response
     restore_mode: RESTORE_DEFAULT_ON  # Restore to last brightness on boot
+    on_turn_on:
+      - script.execute: auto_off_timer  # Start auto-off countdown
+    on_turn_off:
+      - script.stop: auto_off_timer  # Cancel auto-off timer
 
   - platform: esp32_rmt_led_strip
     id: status_led
@@ -247,7 +276,7 @@ light:
     pin: GPIO20
     num_leds: 1
     chipset: WS2812
-    rgb_order: GRB
+    channel_colors: GRB
     use_psram: false  # M5NanoC6 has no PSRAM; default true causes silent init failure
 
 # =============================

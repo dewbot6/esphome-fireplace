@@ -1,6 +1,5 @@
 esphome:
   name: fireplace-millivolt
-  name_add_mac_suffix: true
   # Device name used for hostname and entity IDs in Home Assistant
   on_boot:
     # Set status LED to red immediately on power-up before the first interval fires.
@@ -136,6 +135,7 @@ binary_sensor:
   - platform: gpio
     pin:
       number: GPIO9
+      ignore_strapping_warning: true  # onboard button, hardwired to the strapping pin
       mode:
         input: true
         pullup: true
@@ -164,7 +164,7 @@ light:
     pin: GPIO20
     num_leds: 1
     chipset: WS2812
-    rgb_order: GRB
+    channel_colors: GRB
     use_psram: false  # DevKitC-1 has no PSRAM; default true causes silent init failure
 
 # =============================
